@@ -175,3 +175,49 @@ describe('Apply non-matching rule', () => {
       });
     });
   }); 
+
+  describe('Test redirect rule with querystring', () => {
+    it('should return a the an object the new URI of the first rule with querystring', () => {
+      var fixture = {"Records":[{"cf":{"request":{"headers":{"host":[{"key":"Host","value":"foo.bar.baz"}]},"method":"GET","uri":"/redirecT/3243", "querystring": "test=1&test=2"}}}]};
+      var stub = sinon.stub(RuleSet.prototype,'getRawRules').returns(['^/redirect/?(.*) https://example.org/$1 [R,NC]','^/redirect/\\d*$ /bar']);
+      var rs = new RuleSet();
+      rs.loadRules().then(() => {
+        var res = rs.applyRules(fixture).res;
+        sinon.assert.match(stub.callCount,1);
+        sinon.assert.match(res.status,301);
+        sinon.assert.match(res.statusDescription,'Found');
+        sinon.assert.match(res.headers.location[0].value,'https://example.org/3243?test=1&test=2'); 
+        stub.restore();     
+      });
+    });
+  });
+
+  describe('Test redirect rule with s3 origin', () => {
+    it('should return a the an object the new URI of the first rule with the match and changed origin to s3', () => {
+      var fixture = {"Records":[{"cf":{"request":{"headers":{"host":[{"key":"Host","value":"foo.bar.baz"}]},"method":"GET","uri":"/redirecT/3243"}}}]};
+      var stub = sinon.stub(RuleSet.prototype,'getRawRules').returns(['^/redirect/?(.*) s3.amazon.com/$1 [S3O,NC]','^/redirect/\\d*$ /bar']);
+      var rs = new RuleSet();
+      rs.loadRules().then(() => {
+        var res = rs.applyRules(fixture).res;
+        sinon.assert.match(stub.callCount,1);
+        sinon.assert.match(res.origin.s3.domainName, 's3.amazon.com');
+        sinon.assert.match(res.origin.s3.path, '3243');
+        stub.restore();     
+      });
+    });
+  }); 
+
+  describe('Test redirect rule with custom origin', () => {
+    it('should return a the an object the new URI of the first rule with the match and changed origin to custom', () => {
+      var fixture = {"Records":[{"cf":{"request":{"headers":{"host":[{"key":"Host","value":"foo.bar.baz"}]},"method":"GET","uri":"/redirecT/3243"}}}]};
+      var stub = sinon.stub(RuleSet.prototype,'getRawRules').returns(['^/redirect/?(.*) s3.amazon.com/$1 [CO,NC]','^/redirect/\\d*$ /bar']);
+      var rs = new RuleSet();
+      rs.loadRules().then(() => {
+        var res = rs.applyRules(fixture).res;
+        sinon.assert.match(stub.callCount,1);
+        sinon.assert.match(res.origin.custom.domainName, 's3.amazon.com');
+        sinon.assert.match(res.origin.custom.path, '3243');
+        stub.restore();     
+      });
+    });
+  }); 

@@ -1,5 +1,7 @@
 const rp = require('request-promise-native');
 
+const customOriginSyntax = /CO/;
+const s3OriginSyntax = /S3O/;
 const noCaseSyntax = /NC/;
 const lastSyntax = /L/;
 const redirectSyntax = /R=?(\d+)?/;
@@ -73,6 +75,8 @@ class RuleSet {
   parseRules(unparsedRules) {
     return (unparsedRules || []).map(function (rule) {
       // Reset all regular expression indexes
+      customOriginSyntax.lastIndex = 0;
+      s3OriginSyntax.lastIndex = 0;
       lastSyntax.lastIndex = 0;
       redirectSyntax.lastIndex = 0;
       forbiddenSyntax.lastIndex = 0;
@@ -98,6 +102,8 @@ class RuleSet {
         regexp: typeof parts[2] !== 'undefined' && noCaseSyntax.test(flags) ? new RegExp(parts[0], 'i') : new RegExp(parts[0]),
         replace: parts[1],
         inverted: inverted,
+        redirectCustomOrigin: customOriginSyntax.test(flags),
+        redirectS3Origin: s3OriginSyntax.test(flags),
         last: lastSyntax.test(flags),
         redirect: redirectValue ? (typeof redirectValue[1] !== 'undefined' ? redirectValue[1] : 301) : false,
         forbidden: forbiddenSyntax.test(flags),
@@ -149,6 +155,7 @@ class RuleSet {
   
       // Redirect
       if (rule.redirect) {
+        const uriq = req.querystring ? req.uri + '?' + req.querystring : req.uri;
         return {
           'res': {
             status: rule.redirect || 301,
@@ -156,13 +163,56 @@ class RuleSet {
             headers: {
               location: [{
                 key: 'Location',
-                value: uri.replace(rule.regexp, rule.replace),
+                value: uriq.replace(rule.regexp, rule.replace),
               }],
             },
           }, 'skip': rule.last
         };
       }
-  
+
+      // Redirect to s3 origin
+      if (rule.redirectS3Origin) {
+        const originName = rule.replace.split('/')[0];
+        req.uri = uri.replace(rule.regexp, rule.replace).replace(originName, '');
+        req.origin = {
+          s3: {
+            region: '',
+            authMethod: 'none',
+            customHeaders: {},
+            domainName: originName,
+            path: '',
+          }
+        }
+        req.headers['host'] = [{ key: 'host', value: originName}];
+        return {
+          res: req,
+          skip: rule.last
+        }
+      }
+
+      // Redirect to custom origin
+      if (rule.redirectCustomOrigin) {
+        const originName = rule.replace.split('/')[0];
+        req.uri = uri.replace(rule.regexp, rule.replace).replace(originName, '');
+        req.origin = {
+          custom: {
+            domainName: originName,
+            port: 443,
+            protocol: 'https',
+            path: '',
+            sslProtocols: ['TLSv1', 'TLSv1.1'],
+            readTimeout: 5,
+            keepaliveTimeout: 5,
+            customHeaders: {}
+          }
+        }
+        req.headers['host'] = [{ key: 'host', value: originName }];
+        return {
+          res: req,
+          skip: rule.last
+        }
+      }
+
       // Rewrite
       if (!rule.inverted) {
         if (rule.replace !== '-') {
